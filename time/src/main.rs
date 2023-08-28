@@ -1,7 +1,12 @@
+extern crate libc;
+
 use std::error;
+use std::ffi;
 use std::process;
+use std::ptr;
 
 use clap::{crate_name, crate_version, Arg, ArgAction, Command};
+// use libc;
 use rust_decimal::Decimal;
 use time;
 
@@ -77,7 +82,63 @@ fn run_command(
 
     resource_use.begin();
 
-    let _output: process::Output = process::Command::new(command).args(arguments).output()?;
+    let pid = unsafe { libc::fork() };
+
+    // Child
+    if pid == 0 {
+        let mut c_args = Vec::with_capacity(arguments.len() + 1);
+        c_args.push(command);
+        c_args.extend_from_slice(&arguments);
+
+        let command = ffi::CString::new(command).unwrap();
+
+        let args_cstr: Vec<ffi::CString> = c_args
+            .iter()
+            .map(|&arg| ffi::CString::new(arg).expect("CString creation failed"))
+            .collect();
+
+        let args_ptrs: Vec<*const ffi::c_char> =
+            args_cstr.iter().map(|cstr| cstr.as_ptr()).collect();
+
+        let mut args_ptrs_with_null: Vec<*const ffi::c_char> = args_ptrs.clone();
+        args_ptrs_with_null.push(ptr::null());
+
+        let result = unsafe { libc::execvp(command.as_ptr(), args_ptrs_with_null.as_ptr()) };
+        if result == -1 {
+            println!("Failed")
+        }
+
+        process::exit(0);
+    }
+
+    let mut status: libc::c_int = 0;
+    let options: libc::c_int = 0; // No options
+    let mut rusage: libc::rusage = libc::rusage {
+        ru_utime: libc::timeval {
+            tv_sec: 0,
+            tv_usec: 0,
+        },
+        ru_stime: libc::timeval {
+            tv_sec: 0,
+            tv_usec: 0,
+        },
+        ru_maxrss: 0,
+        ru_ixrss: 0,
+        ru_idrss: 0,
+        ru_isrss: 0,
+        ru_minflt: 0,
+        ru_majflt: 0,
+        ru_nswap: 0,
+        ru_inblock: 0,
+        ru_oublock: 0,
+        ru_msgsnd: 0,
+        ru_msgrcv: 0,
+        ru_nsignals: 0,
+        ru_nvcsw: 0,
+        ru_nivcsw: 0,
+    };
+
+    let _pid = unsafe { libc::wait4(pid, &mut status, options, &mut rusage) };
 
     resource_use.finish();
 
